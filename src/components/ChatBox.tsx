@@ -1,5 +1,8 @@
-import { useState, FormEvent } from 'react';
+import { useState } from 'react';
+import type { FormEvent } from 'react';
 import { buildApiUrl, getErrorMessage } from '../api';
+import { getUiText } from '../constants';
+import type { ChatResponse } from '../types';
 import '../styles/chat-box.css';
 
 type Message = {
@@ -13,72 +16,125 @@ type ChatBoxProps = {
   onResponse: (points: number) => void;
 };
 
+type ChatMessageListProps = {
+  messages: Message[];
+  loading: boolean;
+  typingText: string;
+};
+
+type ChatFormProps = {
+  message: string;
+  loading: boolean;
+  text: ReturnType<typeof getUiText>;
+  onMessageChange: (message: string) => void;
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+};
+
+const requestChatResponse = async (
+  message: string,
+  currentShape: string,
+  text: ReturnType<typeof getUiText>,
+): Promise<ChatResponse> => {
+  const response = await fetch(buildApiUrl('/chat/'), {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ mensaje: message, figura_actual: currentShape }),
+  });
+
+  if (!response.ok) {
+    const errorText = await getErrorMessage(response);
+    throw new Error(text.chatbotRequestError(errorText));
+  }
+
+  const data: ChatResponse = await response.json();
+  return data;
+};
+
+const ChatMessageList = ({ messages, loading, typingText }: ChatMessageListProps) => (
+  <div className="chat-container" role="log" aria-live="polite">
+    {messages.map((message) => (
+      <div
+        key={message.id}
+        className={`message-row ${message.sender === 'user' ? 'message-row-user' : ''}`}
+      >
+        <div
+          className={`message-bubble ${
+            message.sender === 'user' ? 'message-bubble-user' : 'message-bubble-bot'
+          }`}
+        >
+          {message.sender === 'bot' ? <span className="message-avatar">🤖</span> : null}
+          <p>{message.text}</p>
+        </div>
+      </div>
+    ))}
+    {loading ? (
+      <div className="message-row">
+        <div className="message-bubble message-bubble-bot">
+          <p>{typingText}</p>
+        </div>
+      </div>
+    ) : null}
+  </div>
+);
+
+const ChatForm = ({ message, loading, text, onMessageChange, onSubmit }: ChatFormProps) => (
+  <form onSubmit={onSubmit} className="chat-form">
+    <input
+      id="chat-input"
+      type="text"
+      value={message}
+      onChange={(event) => onMessageChange(event.target.value)}
+      placeholder={text.chatInputPlaceholder}
+      disabled={loading}
+    />
+    <button type="submit" disabled={loading}>
+      {loading ? text.chatSending : text.chatSend}
+    </button>
+  </form>
+);
+
 const ChatBox = ({ currentShape, onResponse }: ChatBoxProps) => {
+  const text = getUiText();
   const [message, setMessage] = useState('');
   const [messages, setMessages] = useState<Message[]>([
     {
       id: 1,
       sender: 'bot',
-      text: '¡Hola! Pregúntame cómo jugar o pide una pista sobre la figura actual.',
+      text: text.chatWelcome,
     },
   ]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+
+  const appendMessage = (sender: Message['sender'], text: string, id = Date.now()) => {
+    setMessages((previousMessages) => [...previousMessages, { id, sender, text }]);
+  };
+
+  const handleRequestError = (error: unknown) => {
+    console.error(error);
+    const message = error instanceof Error ? error.message : String(error);
+    setError(text.chatbotConnectionError(message));
+    appendMessage('bot', text.chatbotFallbackReply, Date.now() + 2);
+  };
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const trimmedMessage = message.trim();
     if (!trimmedMessage) return;
 
-    const userMessage: Message = {
-      id: Date.now(),
-      sender: 'user',
-      text: trimmedMessage,
-    };
-
-    setMessages((prev) => [...prev, userMessage]);
+    appendMessage('user', trimmedMessage);
     setMessage('');
     setLoading(true);
     setError('');
 
     try {
-      const response = await fetch(buildApiUrl('/chat/'), {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ mensaje: trimmedMessage, figura_actual: currentShape }),
-      });
-
-      if (!response.ok) {
-        const errorText = await getErrorMessage(response);
-        throw new Error(`Error en la consulta del chatbot: ${errorText}`);
-      }
-
-      const data = await response.json();
-      const botReply = data.respuesta ?? 'El bot no respondió.';
-
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: Date.now() + 1,
-          sender: 'bot',
-          text: botReply,
-        },
-      ]);
-      onResponse(data.puntos_a_sumar_o_restar ?? 0);
-    } catch (err) {
-      console.error(err);
-      const errorMessage = err instanceof Error ? err.message : String(err);
-      setError(`No se pudo conectar con el chatbot. Error: ${errorMessage}. Intenta de nuevo.`);
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: Date.now() + 2,
-          sender: 'bot',
-          text: 'No pude responder en este momento. Intenta otra vez.',
-        },
-      ]);
+      const response = await requestChatResponse(trimmedMessage, currentShape, text);
+      appendMessage('bot', response.respuesta ?? text.chatbotNoReply, Date.now() + 1);
+      onResponse(response.puntos_a_sumar_o_restar ?? 0);
+    } catch (error) {
+      handleRequestError(error);
     } finally {
       setLoading(false);
     }
@@ -89,38 +145,22 @@ const ChatBox = ({ currentShape, onResponse }: ChatBoxProps) => {
       <div className="chat-header">
         <div className="chat-avatar">🤖</div>
         <div>
-          <h3>Asistente de juego</h3>
-          <p>Pregunta cómo jugar o pide una pista</p>
+          <h3>{text.chatTitle}</h3>
+          <p>{text.chatDescription}</p>
         </div>
       </div>
 
-      <div className="chat-container" role="log" aria-live="polite">
-        {messages.map((msg) => (
-          <div key={msg.id} className={`message-row ${msg.sender === 'user' ? 'message-row-user' : ''}`}>
-            <div className={`message-bubble ${msg.sender === 'user' ? 'message-bubble-user' : 'message-bubble-bot'}`}>
-              {msg.sender === 'bot' ? <span className="message-avatar">🤖</span> : null}
-              <p>{msg.text}</p>
-            </div>
-          </div>
-        ))}
-        {loading ? <div className="message-row"><div className="message-bubble message-bubble-bot"><p>Escribiendo...</p></div></div> : null}
-      </div>
+      <ChatMessageList messages={messages} loading={loading} typingText={text.chatTyping} />
 
       {error ? <p className="chat-error">{error}</p> : null}
 
-      <form onSubmit={handleSubmit} className="chat-form">
-        <input
-          id="chat-input"
-          type="text"
-          value={message}
-          onChange={(event) => setMessage(event.target.value)}
-          placeholder="Escribe tu pregunta aquí..."
-          disabled={loading}
-        />
-        <button type="submit" disabled={loading}>
-          {loading ? '...' : 'Enviar'}
-        </button>
-      </form>
+      <ChatForm
+        message={message}
+        loading={loading}
+        text={text}
+        onMessageChange={setMessage}
+        onSubmit={handleSubmit}
+      />
     </section>
   );
 };

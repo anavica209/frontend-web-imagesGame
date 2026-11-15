@@ -1,3 +1,5 @@
+import { getUiText } from './constants';
+
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? '/api').replace(/\/$/, '');
 
 export const buildApiUrl = (path: string) => {
@@ -9,7 +11,7 @@ export const getErrorMessage = async (response: Response) => {
   const rawText = await response.text();
 
   if (!rawText) {
-    return 'Respuesta inesperada del servidor.';
+    return getUiText().unexpectedServerResponse;
   }
 
   try {
