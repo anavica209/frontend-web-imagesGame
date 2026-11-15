@@ -1,13 +1,26 @@
 import { cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { ChallengeTask } from '../src/types';
+import type { AnswerSubmissionResponse, ChallengeTask } from '../src/types';
 import { getUiText } from '../src/constants';
 import ImageGenerator from '../src/components/ImageGenerator';
 
 vi.mock('../src/components/ChatBox', () => ({
-  default: ({ onResponse }: { onResponse: (points: number) => void }) => (
-    <button type="button" onClick={() => onResponse(3)}>
+  default: ({
+    onResponse,
+  }: {
+    onResponse: (response: {
+      respuesta: string;
+      puntos_a_sumar_o_restar: number;
+      scoreTotal?: number;
+    }) => void;
+  }) => (
+    <button
+      type="button"
+      onClick={() =>
+        onResponse({ respuesta: '', puntos_a_sumar_o_restar: 3, scoreTotal: 3 })
+      }
+    >
       Add chat points
     </button>
   ),
@@ -19,16 +32,28 @@ const responseFor = (data: ChallengeTask) =>
 const firstChallenge: ChallengeTask = {
   id: '1',
   imageUrl: '/circle.png',
-  correctAnswer: 'circle',
   options: ['circle', 'square'],
+  scoreTotal: 0,
+  streak: 2,
 };
 
 const nextChallenge: ChallengeTask = {
   id: '2',
   imageUrl: '/square.png',
-  correctAnswer: 'square',
   options: ['square', 'circle'],
+  scoreTotal: 5,
+  streak: 3,
 };
+
+const answerResponse = (isCorrect: boolean): AnswerSubmissionResponse => ({
+  challengeId: '1',
+  isCorrect,
+  feedback: isCorrect ? 'Correct!' : 'Incorrect answer',
+  scoreDelta: isCorrect ? 5 : 0,
+  scoreTotal: isCorrect ? 5 : 0,
+  streak: isCorrect ? 3 : 0,
+  nextChallenge: isCorrect ? nextChallenge : null,
+});
 
 const setup = (...responses: Array<Response | Promise<Response>>) => {
   const fetchMock = vi.fn<typeof fetch>();
@@ -59,22 +84,36 @@ afterEach(() => {
 
 describe('ImageGenerator', () => {
   it('renders the challenge and shows feedback for an incorrect answer', async () => {
-    const { text, user } = setup(responseFor(firstChallenge));
+    const text = getUiText();
+    const { user } = setup(responseFor(firstChallenge), responseFor(answerResponse(false)));
 
     expect(await findChallengeImage(text.challengeImageAlt)).toBeTruthy();
+    expect(await screen.findByText(text.streak(2))).toBeTruthy();
     await clickOption(user, 'Square');
 
-    expect(await screen.findByText(text.incorrectAnswer)).toBeTruthy();
+    expect(await screen.findByText('Incorrect answer')).toBeTruthy();
+    expect(await screen.findByText(text.streak(0))).toBeTruthy();
+    expect((await findChallengeImage(text.challengeImageAlt)).getAttribute('src')).toBe('/circle.png');
   });
 
   it('awards points and loads the next challenge after a correct answer', async () => {
-    const { fetchMock, text, user } = setup(responseFor(firstChallenge), responseFor(nextChallenge));
+    const { fetchMock, text, user } = setup(
+      responseFor(firstChallenge),
+      responseFor(answerResponse(true)),
+    );
 
     await clickOption(user, 'Circle');
 
     expect(await screen.findByText(text.score(5))).toBeTruthy();
     expect((await findChallengeImage(text.challengeImageAlt)).getAttribute('src')).toBe('/square.png');
     expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      '/api/challenges/1/answer/',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ answer: 'circle' }),
+      }),
+    );
   });
 
   it('shows a loading indicator until the challenge arrives', async () => {

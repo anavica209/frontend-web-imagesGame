@@ -49,6 +49,43 @@ The frontend is configured to proxy `/api` requests to the backend at:
 
 So the backend should be running before you use frontend features that call the API.
 
+## Gameplay API contract
+The frontend loads the current challenge from `GET /api/next-challenge/`. Return
+`id`, `imageUrl`, and `options`; `scoreTotal` and `streak` can initialize the
+header values. Do not return `correctAnswer` because the frontend no longer checks
+answers locally.
+
+Answers are submitted to `POST /api/challenges/{challengeId}/answer/` with:
+
+```json
+{ "answer": "delfin" }
+```
+
+The endpoint should return the server-calculated result and, on a correct answer,
+the next challenge:
+
+```json
+{
+  "challengeId": "abc123",
+  "isCorrect": true,
+  "feedback": "¡Correcto!",
+  "scoreDelta": 5,
+  "scoreTotal": 20,
+  "streak": 3,
+  "nextChallenge": {
+    "id": "def456",
+    "imageUrl": "http://localhost:8000/media/lamina.png",
+    "options": ["tiburon", "delfin", "ballena", "pulpo"]
+  }
+}
+```
+
+For an incorrect answer, return `isCorrect: false` and `nextChallenge: null`;
+the current challenge remains visible. The frontend also sends `challenge_id`
+instead of the answer text to `POST /api/chat/`, so the backend can provide hints
+without exposing the correct answer. If chat responses modify the score or streak,
+include the updated `scoreTotal` and `streak` in the response.
+
 ## OpenAPI types and data fetching
 Generate TypeScript types from the Django OpenAPI schema with:
 

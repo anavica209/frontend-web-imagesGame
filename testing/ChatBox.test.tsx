@@ -11,6 +11,8 @@ const responseFor = (data: ChatResponse) =>
 const chatResponse: ChatResponse = {
   respuesta: 'It is a circle.',
   puntos_a_sumar_o_restar: 2,
+  scoreTotal: 7,
+  streak: 2,
 };
 
 const setup = (response?: Response | Promise<Response>) => {
@@ -24,7 +26,7 @@ const setup = (response?: Response | Promise<Response>) => {
   const user = userEvent.setup();
   const text = getUiText();
 
-  render(<ChatBox currentShape="circle" onResponse={onResponse} />);
+  render(<ChatBox challengeId="challenge-1" onResponse={onResponse} />);
 
   return { fetchMock, onResponse, text, user };
 };
@@ -54,10 +56,10 @@ describe('ChatBox', () => {
       '/api/chat/',
       expect.objectContaining({
         method: 'POST',
-        body: JSON.stringify({ mensaje: 'Give me a hint', figura_actual: 'circle' }),
+        body: JSON.stringify({ mensaje: 'Give me a hint', challenge_id: 'challenge-1' }),
       }),
     );
-    expect(onResponse).toHaveBeenCalledWith(2);
+    expect(onResponse).toHaveBeenCalledWith(chatResponse);
   });
 
   it('does not send an empty question', async () => {

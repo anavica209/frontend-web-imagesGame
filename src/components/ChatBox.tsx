@@ -12,8 +12,8 @@ type Message = {
 };
 
 type ChatBoxProps = {
-  currentShape: string;
-  onResponse: (points: number) => void;
+  challengeId: string;
+  onResponse: (response: ChatResponse) => void;
 };
 
 type ChatMessageListProps = {
@@ -32,7 +32,7 @@ type ChatFormProps = {
 
 const requestChatResponse = async (
   message: string,
-  currentShape: string,
+  challengeId: string,
   text: ReturnType<typeof getUiText>,
 ): Promise<ChatResponse> => {
   const response = await fetch(buildApiUrl('/chat/'), {
@@ -40,7 +40,7 @@ const requestChatResponse = async (
     headers: {
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ mensaje: message, figura_actual: currentShape }),
+    body: JSON.stringify({ mensaje: message, challenge_id: challengeId }),
   });
 
   if (!response.ok) {
@@ -95,7 +95,7 @@ const ChatForm = ({ message, loading, text, onMessageChange, onSubmit }: ChatFor
   </form>
 );
 
-const ChatBox = ({ currentShape, onResponse }: ChatBoxProps) => {
+const ChatBox = ({ challengeId, onResponse }: ChatBoxProps) => {
   const text = getUiText();
   const [message, setMessage] = useState('');
   const [messages, setMessages] = useState<Message[]>([
@@ -130,9 +130,9 @@ const ChatBox = ({ currentShape, onResponse }: ChatBoxProps) => {
     setError('');
 
     try {
-      const response = await requestChatResponse(trimmedMessage, currentShape, text);
+      const response = await requestChatResponse(trimmedMessage, challengeId, text);
       appendMessage('bot', response.respuesta ?? text.chatbotNoReply, Date.now() + 1);
-      onResponse(response.puntos_a_sumar_o_restar ?? 0);
+      onResponse(response);
     } catch (error) {
       handleRequestError(error);
     } finally {

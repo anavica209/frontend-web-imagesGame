@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import logo from '../assets/logo.png';
-import type { ChallengeTask } from '../types';
+import type { AnswerSubmissionResponse, ChallengeTask, ChatResponse } from '../types';
 import { buildApiUrl, getErrorMessage } from '../api';
 import { getUiText } from '../constants';
 import ChatBox from './ChatBox';
@@ -18,18 +18,43 @@ const requestChallenge = async (): Promise<ChallengeTask> => {
   return challenge;
 };
 
+const submitChallengeAnswer = async (
+  challengeId: string,
+  answer: string,
+): Promise<AnswerSubmissionResponse> => {
+  const response = await fetch(
+    buildApiUrl(`/challenges/${encodeURIComponent(challengeId)}/answer/`),
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ answer }),
+    },
+  );
+
+  if (!response.ok) {
+    throw new Error(await getErrorMessage(response));
+  }
+
+  return response.json();
+};
+
 const useChallengeGame = (text: UiText) => {
   const [challenge, setChallenge] = useState<ChallengeTask | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
+  const [submittingAnswer, setSubmittingAnswer] = useState<boolean>(false);
   const [feedback, setFeedback] = useState<string>('');
   const [playerPoints, setPlayerPoints] = useState<number>(0);
+  const [streakCount, setStreakCount] = useState<number>(0);
 
   const fetchChallenge = useCallback(async () => {
     setLoading(true);
     setFeedback('');
 
     try {
-      setChallenge(await requestChallenge());
+      const nextChallenge = await requestChallenge();
+      setChallenge(nextChallenge);
+      setPlayerPoints(nextChallenge.scoreTotal ?? 0);
+      setStreakCount(nextChallenge.streak ?? 0);
     } catch (error) {
       console.error(error);
       setFeedback(text.challengeLoadError);
@@ -43,23 +68,37 @@ const useChallengeGame = (text: UiText) => {
   }, [fetchChallenge]);
 
   const handleAnswer = async (selectedAnswer: string) => {
-    if (!challenge) {
+    if (!challenge || submittingAnswer) {
       return;
     }
 
-    if (selectedAnswer === challenge.correctAnswer) {
-      setPlayerPoints((points) => points + 5);
-      setFeedback(text.correctAnswer(5));
-      await fetchChallenge();
-      return;
-    }
+    setSubmittingAnswer(true);
+    setFeedback('');
 
-    setFeedback(text.incorrectAnswer);
+    try {
+      const result = await submitChallengeAnswer(challenge.id, selectedAnswer);
+      setPlayerPoints(result.scoreTotal);
+      setStreakCount(result.streak);
+      setFeedback(result.feedback);
+
+      if (result.isCorrect) {
+        setChallenge(result.nextChallenge);
+      }
+    } catch (error) {
+      console.error(error);
+      setFeedback(text.answerRequestError);
+    } finally {
+      setSubmittingAnswer(false);
+    }
   };
 
-  const handleChatResponse = (pointsDelta: number) => {
-    if (pointsDelta !== 0) {
-      setPlayerPoints((points) => points + pointsDelta);
+  const handleChatResponse = (response: ChatResponse) => {
+    if (response.scoreTotal !== undefined) {
+      setPlayerPoints(response.scoreTotal);
+    }
+
+    if (response.streak !== undefined) {
+      setStreakCount(response.streak);
     }
   };
 
@@ -70,30 +109,37 @@ const useChallengeGame = (text: UiText) => {
     handleChatResponse,
     loading,
     playerPoints,
+    streakCount,
+    submittingAnswer,
   };
 };
 
 type ChallengeContentProps = {
   challenge: ChallengeTask | null;
-  feedback: string;
   loading: boolean;
-  onAnswer: (selectedAnswer: string) => Promise<void>;
   text: UiText;
 };
 
 const AnswerOptions = ({
   options,
   onAnswer,
+  disabled,
 }: {
   options: string[];
   onAnswer: (selectedAnswer: string) => Promise<void>;
+  disabled: boolean;
 }) => (
   <div className="controls-section">
     {options.map((option) => {
       const displayLabel = option.charAt(0).toUpperCase() + option.slice(1);
 
       return (
-        <button key={option} className="option-button" onClick={() => void onAnswer(option)}>
+        <button
+          key={option}
+          className="option-button"
+          disabled={disabled}
+          onClick={() => void onAnswer(option)}
+        >
           {displayLabel}
         </button>
       );
@@ -101,56 +147,103 @@ const AnswerOptions = ({
   </div>
 );
 
-const ChallengeContent = ({ challenge, feedback, loading, onAnswer, text }: ChallengeContentProps) => (
-  <div className="challenge-main">
+const ChallengeContent = ({
+  challenge,
+  loading,
+  text,
+}: ChallengeContentProps) => (
+  <>
     <div className="image-section">
-      {loading ? (
-        <div className="spinner" aria-label={text.loadingChallenge} />
-      ) : challenge?.imageUrl ? (
-        <img src={challenge.imageUrl} alt={text.challengeImageAlt} className="challenge-image" />
-      ) : (
-        <p>{text.noChallenge}</p>
-      )}
+      <div className="image-viewport">
+        {loading ? (
+          <div className="spinner" aria-label={text.loadingChallenge} />
+        ) : challenge?.imageUrl ? (
+          <img
+            src={challenge.imageUrl}
+            alt={text.challengeImageAlt}
+            className="challenge-image"
+          />
+        ) : (
+          <p>{text.noChallenge}</p>
+        )}
+      </div>
     </div>
-
-    {challenge ? <AnswerOptions options={challenge.options} onAnswer={onAnswer} /> : null}
-
-    {feedback ? <p className="feedback">{feedback}</p> : null}
-  </div>
+  </>
 );
 
 const ImageGenerator = () => {
   const text = getUiText();
-  const { challenge, feedback, handleAnswer, handleChatResponse, loading, playerPoints } =
-    useChallengeGame(text);
+  const {
+    challenge,
+    feedback,
+    handleAnswer,
+    handleChatResponse,
+    loading,
+    playerPoints,
+    streakCount,
+    submittingAnswer,
+  } = useChallengeGame(text);
 
   return (
     <div className="app-shell">
       <header className="topbar">
-        <img src={logo} alt={text.logoAlt} className="logo" />
+        <div className="brand">
+          <img src={logo} alt={text.logoAlt} className="logo" />
+          <div>
+            <h1>{text.appName}</h1>
+            <p>{text.appTagline}</p>
+          </div>
+        </div>
+        <div className="header-metrics">
+          {challenge && (
+            <span className="metric-badge streak-badge">
+              <span aria-hidden="true">🔥 </span>
+              <span>{text.streak(streakCount)}</span>
+            </span>
+          )}
+          <span className="metric-badge score-badge">
+            <span aria-hidden="true">🏆 </span>
+            <span>{text.score(playerPoints)}</span>
+          </span>
+        </div>
       </header>
 
-      <main className="challenge-card">
-        <div className="score-row">
-          <span>{text.score(playerPoints)}</span>
-        </div>
-
-        <div className="challenge-layout">
+      <main className="game-layout">
+        <section className="image-panel">
+          <div className="image-panel-heading">
+            <span className="eyebrow">{text.appName}</span>
+            <h2>{text.questionTitle}</h2>
+          </div>
           <ChallengeContent
             challenge={challenge}
-            feedback={feedback}
             loading={loading}
-            onAnswer={handleAnswer}
             text={text}
           />
-        </div>
-      </main>
+        </section>
 
-      {challenge ? (
-        <div className="chat-side-panel">
-          <ChatBox currentShape={challenge.correctAnswer} onResponse={handleChatResponse} />
-        </div>
-      ) : null}
+        <aside className="game-sidebar">
+          <div className="sidebar-heading">
+            <span className="eyebrow">{text.answersTitle}</span>
+          </div>
+          {challenge ? (
+            <ChatBox
+              key={challenge.id}
+              challengeId={challenge.id}
+              onResponse={handleChatResponse}
+            />
+          ) : loading ? (
+            <div className="chat-placeholder">{text.loadingChallenge}</div>
+          ) : null}
+          {challenge ? (
+            <AnswerOptions
+              options={challenge.options}
+              onAnswer={handleAnswer}
+              disabled={submittingAnswer}
+            />
+          ) : null}
+          {feedback ? <p className="feedback" role="status">{feedback}</p> : null}
+        </aside>
+      </main>
     </div>
   );
 };
